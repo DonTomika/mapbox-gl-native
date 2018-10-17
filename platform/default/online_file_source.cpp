@@ -98,7 +98,7 @@ public:
         assert(activeRequests.find(request) == activeRequests.end());
         assert(!request->request);
 
-        if (activeRequests.size() >= HTTPFileSource::maximumConcurrentRequests()) {
+        if (activeRequests.size() >= getMaximumConcurrentRequests()) {
             queueRequest(request);
         } else {
             activateRequest(request);
@@ -134,7 +134,9 @@ public:
 
         auto request = pendingRequests.pop();
 
-        if (request) activateRequest(*request);
+        if (request) {
+            activateRequest(*request);
+        }
     }
 
     bool isPending(OnlineFileRequest* request) {
@@ -154,15 +156,19 @@ public:
         networkIsReachableAgain();
     }
 
-    void setMaximumConcurrentRequestsOverride(const uint32_t override) {
-        maximumConcurrentRequestsOverride = override;
+    void setMaximumConcurrentRequestsOverride(const uint32_t maximum_concurrent_requests_override_) {
+        maximum_concurrent_requests_override = maximum_concurrent_requests_override_;
     }
 
 private:
 
-    uint32_t getMaximumConcurrentRequests() {
-        if (maximumConcurrentRequestsOverride > 0) return maximumConcurrentRequestsOverride;
-        else return HTTPFileSource::maximumConcurrentRequests();
+    uint32_t getMaximumConcurrentRequests() const {
+        if (maximum_concurrent_requests_override > 0) {
+            return maximum_concurrent_requests_override;
+        }
+        else {
+            return HTTPFileSource::maximumConcurrentRequests();
+        }
     }
 
     void networkIsReachableAgain() {
@@ -178,17 +184,13 @@ private:
         std::list<OnlineFileRequest*> queue;
         std::list<OnlineFileRequest*>::iterator first_low;
 
-        void remove(OnlineFileRequest* request) {
+        void remove(const OnlineFileRequest* request) {
             auto it = std::find(queue.begin(), queue.end(), request);
             if (it != queue.end()) {
                 if (it == first_low) {
                     first_low++;
                 }
                 queue.erase(it);
-
-                if (queue.empty()) {
-                    first_low = queue.begin();
-                }
             }
         }
 
@@ -222,7 +224,7 @@ private:
             return optional<OnlineFileRequest*>(next);
         }
 
-        bool contains(OnlineFileRequest* request) {
+        bool contains(OnlineFileRequest* request) const {
             return (std::find(queue.begin(), queue.end(), request) != queue.end());
         }
 
@@ -248,6 +250,7 @@ private:
     std::unordered_set<OnlineFileRequest*> activeRequests;
 
     bool online = true;
+    uint32_t maximum_concurrent_requests_override = 0;
     HTTPFileSource httpFileSource;
     util::AsyncTask reachability { std::bind(&Impl::networkIsReachableAgain, this) };
 };
@@ -463,6 +466,10 @@ ActorRef<OnlineFileRequest> OnlineFileRequest::actor() {
 
 void OnlineFileSource::setOnlineStatus(const bool status) {
     impl->setOnlineStatus(status);
+}
+
+void OnlineFileSource::setMaximumConcurrentRequestsOverride(const uint32_t maximum_concurrent_requests_override) {
+    impl->setMaximumConcurrentRequestsOverride(maximum_concurrent_requests_override);
 }
 
 } // namespace mbgl
