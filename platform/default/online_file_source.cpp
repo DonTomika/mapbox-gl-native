@@ -89,13 +89,8 @@ public:
         if (activeRequests.erase(request)) {
             activatePendingRequest();
         } else {
-            auto it = pendingRequestsMap.find(request);
-            if (it != pendingRequestsMap.end()) {
-                pendingRequestsList.erase(it->second);
-                pendingRequestsMap.erase(it);
-            }
+            pendingRequests.remove(request);
         }
-        assert(pendingRequestsMap.size() == pendingRequestsList.size());
     }
 
     void activateOrQueueRequest(OnlineFileRequest* request) {
@@ -111,9 +106,7 @@ public:
     }
 
     void queueRequest(OnlineFileRequest* request) {
-        auto it = pendingRequestsList.insert(pendingRequestsList.end(), request);
-        pendingRequestsMap.emplace(request, std::move(it));
-        assert(pendingRequestsMap.size() == pendingRequestsList.size());
+        pendingRequests.insert(request);
     }
 
     void activateRequest(OnlineFileRequest* request) {
@@ -135,25 +128,17 @@ public:
             callback(response);
         }
 
-        assert(pendingRequestsMap.size() == pendingRequestsList.size());
     }
 
     void activatePendingRequest() {
-        if (pendingRequestsList.empty()) {
-            return;
-        }
 
-        OnlineFileRequest* request = pendingRequestsList.front();
-        pendingRequestsList.pop_front();
+        auto request = pendingRequests.pop();
 
-        pendingRequestsMap.erase(request);
-
-        activateRequest(request);
-        assert(pendingRequestsMap.size() == pendingRequestsList.size());
+        if (request) activateRequest(*request);
     }
 
     bool isPending(OnlineFileRequest* request) {
-        return pendingRequestsMap.find(request) != pendingRequestsMap.end();
+        return pendingRequests.contains(request);
     }
 
     bool isActive(OnlineFileRequest* request) {
@@ -169,12 +154,79 @@ public:
         networkIsReachableAgain();
     }
 
+    void setMaximumConcurrentRequestsOverride(const uint32_t override) {
+        maximumConcurrentRequestsOverride = override;
+    }
+
 private:
+
+    uint32_t getMaximumConcurrentRequests() {
+        if (maximumConcurrentRequestsOverride > 0) return maximumConcurrentRequestsOverride;
+        else return HTTPFileSource::maximumConcurrentRequests();
+    }
+
     void networkIsReachableAgain() {
         for (auto& request : allRequests) {
             request->networkIsReachableAgain();
         }
     }
+
+
+    struct PendingRequests {
+        PendingRequests() : queue(), first_low(queue.begin()) {}
+
+        std::list<OnlineFileRequest*> queue;
+        std::list<OnlineFileRequest*>::iterator first_low;
+
+        void remove(OnlineFileRequest* request) {
+            auto it = std::find(queue.begin(), queue.end(), request);
+            if (it != queue.end()) {
+                if (it == first_low) {
+                    first_low++;
+                }
+                queue.erase(it);
+
+                if (queue.empty()) {
+                    first_low = queue.begin();
+                }
+            }
+        }
+
+        void insert(OnlineFileRequest* request) {
+            if (request->resource.priority == Resource::Priority::Regular) {
+                first_low = queue.insert(first_low, request);
+                first_low++;
+            }
+            else {
+                if (first_low == queue.end()) {
+                    first_low = queue.insert(queue.end(), request);
+                }
+                else {
+                    queue.insert(queue.end(), request);
+                }
+            }
+        }
+
+
+        optional<OnlineFileRequest*> pop() {
+            if (queue.empty()) {
+                return optional<OnlineFileRequest*>();
+            }
+
+            if (queue.begin() == first_low) {
+                first_low++;
+            }
+
+            OnlineFileRequest* next = queue.front();
+            queue.pop_front();
+            return optional<OnlineFileRequest*>(next);
+        }
+
+        bool contains(OnlineFileRequest* request) {
+            return (std::find(queue.begin(), queue.end(), request) != queue.end());
+        }
+
+    };
 
     optional<ActorRef<ResourceTransform>> resourceTransform;
 
@@ -190,8 +242,9 @@ private:
      * `pendingRequests`. Requests in the active state are in `activeRequests`.
      */
     std::unordered_set<OnlineFileRequest*> allRequests;
-    std::list<OnlineFileRequest*> pendingRequestsList;
-    std::unordered_map<OnlineFileRequest*, std::list<OnlineFileRequest*>::iterator> pendingRequestsMap;
+
+    PendingRequests pendingRequests;
+
     std::unordered_set<OnlineFileRequest*> activeRequests;
 
     bool online = true;
