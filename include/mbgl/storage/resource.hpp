@@ -24,8 +24,8 @@ public:
         Image
     };
 
-    enum Priority : uint8_t {
-        Regular = 0,
+    enum class Priority : bool {
+        Regular,
         Low
     };
 
